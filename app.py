@@ -1,73 +1,29 @@
+"""Streamlit UI for the Glitchy Guesser.
+
+# FIX: This file used to define get_range_for_difficulty, parse_guess,
+# check_guess and update_score inline, mixing game rules with layout code. All
+# four now live in logic_utils.py (refactored with an AI assistant in agent
+# mode) so pytest can exercise the rules without booting Streamlit. app.py is
+# responsible only for widgets and session state.
+"""
+
 import random
+
 import streamlit as st
 
-def get_range_for_difficulty(difficulty: str):
-    if difficulty == "Easy":
-        return 1, 20
-    if difficulty == "Normal":
-        return 1, 100
-    if difficulty == "Hard":
-        return 1, 50
-    return 1, 100
-
-
-def parse_guess(raw: str):
-    if raw is None:
-        return False, None, "Enter a guess."
-
-    if raw == "":
-        return False, None, "Enter a guess."
-
-    try:
-        if "." in raw:
-            value = int(float(raw))
-        else:
-            value = int(raw)
-    except Exception:
-        return False, None, "That is not a number."
-
-    return True, value, None
-
-
-def check_guess(guess, secret):
-    if guess == secret:
-        return "Win", "🎉 Correct!"
-
-    try:
-        if guess > secret:
-            return "Too High", "📈 Go HIGHER!"
-        else:
-            return "Too Low", "📉 Go LOWER!"
-    except TypeError:
-        g = str(guess)
-        if g == secret:
-            return "Win", "🎉 Correct!"
-        if g > secret:
-            return "Too High", "📈 Go HIGHER!"
-        return "Too Low", "📉 Go LOWER!"
-
-
-def update_score(current_score: int, outcome: str, attempt_number: int):
-    if outcome == "Win":
-        points = 100 - 10 * (attempt_number + 1)
-        if points < 10:
-            points = 10
-        return current_score + points
-
-    if outcome == "Too High":
-        if attempt_number % 2 == 0:
-            return current_score + 5
-        return current_score - 5
-
-    if outcome == "Too Low":
-        return current_score - 5
-
-    return current_score
+from logic_utils import (
+    check_guess,
+    get_attempt_limit,
+    get_range_for_difficulty,
+    hint_message,
+    parse_guess,
+    update_score,
+)
 
 st.set_page_config(page_title="Glitchy Guesser", page_icon="🎮")
 
 st.title("🎮 Game Glitch Investigator")
-st.caption("An AI-generated guessing game. Something is off.")
+st.caption("A number guessing game — debugged, refactored and under test.")
 
 st.sidebar.header("Settings")
 
@@ -77,50 +33,69 @@ difficulty = st.sidebar.selectbox(
     index=1,
 )
 
-attempt_limit_map = {
-    "Easy": 6,
-    "Normal": 8,
-    "Hard": 5,
-}
-attempt_limit = attempt_limit_map[difficulty]
-
 low, high = get_range_for_difficulty(difficulty)
+attempt_limit = get_attempt_limit(difficulty)
 
 st.sidebar.caption(f"Range: {low} to {high}")
 st.sidebar.caption(f"Attempts allowed: {attempt_limit}")
 
-if "secret" not in st.session_state:
-    st.session_state.secret = random.randint(low, high)
 
-if "attempts" not in st.session_state:
-    st.session_state.attempts = 1
+def start_new_game(for_difficulty: str) -> None:
+    """Reset every piece of game state to a clean slate.
 
-if "score" not in st.session_state:
+    # FIXME (starter bug 3): the old "New Game" handler reset only `attempts`
+    # and `secret`. `status` stayed "won"/"lost", so the guard further down hit
+    # st.stop() on the next rerun and the button appeared to do nothing, while
+    # the previous score and history leaked into the new round.
+    # FIX: one function resets ALL of it, and every caller goes through it, so
+    # no reset path can forget a key again.
+    """
+    new_low, new_high = get_range_for_difficulty(for_difficulty)
+    st.session_state.secret = random.randint(new_low, new_high)
+    st.session_state.attempts = 0
     st.session_state.score = 0
-
-if "status" not in st.session_state:
     st.session_state.status = "playing"
-
-if "history" not in st.session_state:
     st.session_state.history = []
+    st.session_state.difficulty = for_difficulty
+    # Bumping the id gives the guess box a fresh widget key, which clears the
+    # text left over from the previous game.
+    st.session_state.game_id = st.session_state.get("game_id", 0) + 1
+
+
+if "secret" not in st.session_state:
+    start_new_game(difficulty)
+
+# FIXME (starter bug): changing the difficulty mid-game left the old secret in
+# place, so on Easy you could be hunting a number outside the 1-20 range the
+# sidebar promised.
+# FIX: a difficulty change starts a fresh game in the new range.
+if st.session_state.difficulty != difficulty:
+    start_new_game(difficulty)
+    st.rerun()
 
 st.subheader("Make a guess")
 
+# FIXME (starter bug 5): this prompt was hardcoded to "between 1 and 100" no
+# matter which difficulty was selected, and `attempts` started at 1 instead of
+# 0 so "Attempts left" was short by one on the very first game.
+# FIX: both numbers now come from the same source of truth as the game itself.
+attempts_left = attempt_limit - st.session_state.attempts
 st.info(
-    f"Guess a number between 1 and 100. "
-    f"Attempts left: {attempt_limit - st.session_state.attempts}"
+    f"Guess a number between {low} and {high}. "
+    f"Attempts left: {attempts_left}"
 )
 
 with st.expander("Developer Debug Info"):
     st.write("Secret:", st.session_state.secret)
-    st.write("Attempts:", st.session_state.attempts)
+    st.write("Attempts used:", st.session_state.attempts)
+    st.write("Attempts left:", attempts_left)
     st.write("Score:", st.session_state.score)
     st.write("Difficulty:", difficulty)
     st.write("History:", st.session_state.history)
 
 raw_guess = st.text_input(
     "Enter your guess:",
-    key=f"guess_input_{difficulty}"
+    key=f"guess_input_{st.session_state.game_id}",
 )
 
 col1, col2, col3 = st.columns(3)
@@ -132,38 +107,38 @@ with col3:
     show_hint = st.checkbox("Show hint", value=True)
 
 if new_game:
-    st.session_state.attempts = 0
-    st.session_state.secret = random.randint(1, 100)
-    st.success("New game started.")
+    start_new_game(difficulty)
     st.rerun()
 
 if st.session_state.status != "playing":
     if st.session_state.status == "won":
-        st.success("You already won. Start a new game to play again.")
+        st.success(
+            f"You already won with a score of {st.session_state.score}. "
+            "Start a new game to play again."
+        )
     else:
         st.error("Game over. Start a new game to try again.")
     st.stop()
 
 if submit:
-    st.session_state.attempts += 1
-
-    ok, guess_int, err = parse_guess(raw_guess)
+    ok, guess_int, err = parse_guess(raw_guess, low, high)
 
     if not ok:
-        st.session_state.history.append(raw_guess)
+        # FIXME (starter bug): the old code incremented `attempts` before
+        # parsing, so a typo such as "abc" burned one of the player's guesses.
+        # FIX: only a successfully parsed guess counts as an attempt.
         st.error(err)
     else:
+        st.session_state.attempts += 1
         st.session_state.history.append(guess_int)
 
-        if st.session_state.attempts % 2 == 0:
-            secret = str(st.session_state.secret)
-        else:
-            secret = st.session_state.secret
-
-        outcome, message = check_guess(guess_int, secret)
+        # FIXME (starter bug 2): app.py used to pass `str(st.session_state.secret)`
+        # on every even-numbered attempt, which pushed check_guess into a
+        # string comparison. The secret is always an int now.
+        outcome = check_guess(guess_int, st.session_state.secret)
 
         if show_hint:
-            st.warning(message)
+            st.warning(hint_message(outcome))
 
         st.session_state.score = update_score(
             current_score=st.session_state.score,
@@ -175,17 +150,18 @@ if submit:
             st.balloons()
             st.session_state.status = "won"
             st.success(
-                f"You won! The secret was {st.session_state.secret}. "
+                f"You won in {st.session_state.attempts} "
+                f"attempt{'s' if st.session_state.attempts != 1 else ''}! "
+                f"The secret was {st.session_state.secret}. "
                 f"Final score: {st.session_state.score}"
             )
-        else:
-            if st.session_state.attempts >= attempt_limit:
-                st.session_state.status = "lost"
-                st.error(
-                    f"Out of attempts! "
-                    f"The secret was {st.session_state.secret}. "
-                    f"Score: {st.session_state.score}"
-                )
+        elif st.session_state.attempts >= attempt_limit:
+            st.session_state.status = "lost"
+            st.error(
+                f"Out of attempts! "
+                f"The secret was {st.session_state.secret}. "
+                f"Score: {st.session_state.score}"
+            )
 
 st.divider()
-st.caption("Built by an AI that claims this code is production-ready.")
+st.caption("Refactored, fixed and tested by a human with an AI pair programmer.")
