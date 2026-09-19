@@ -1,0 +1,9 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.3, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/somamasiddiqui/Desktop/codepathAI/ai110-module1show-gameglitchinvestigator-starter
+plugins: anyio-4.15.1
+collected 35 items
+
+tests/test_game_logic.py ...................................             [100%]
+
+============================== 35 passed in 0.02s ==============================
